@@ -1,0 +1,496 @@
+import math
+import os
+import sys
+from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QLabel, QPushButton, QTextEdit, QInputDialog
+
+# Define constants
+MAX_AMMO = 10
+FILE_NAME = "ammo.txt"
+
+class Ammo:
+    def __init__(self, name, initialVelocity, mass, dragCoefficient, crossSectionalArea, explosionRadius, maxRange):
+        self.name = name
+        self.initialVelocity = initialVelocity
+        self.mass = mass
+        self.dragCoefficient = dragCoefficient
+        self.crossSectionalArea = crossSectionalArea
+        self.explosionRadius = explosionRadius
+        self.maxRange = maxRange
+
+ammoList = []
+ammoCount = 0
+
+def generateAmmoFileIfNotExists():
+    if not os.path.exists(FILE_NAME):
+        with open(FILE_NAME, "w") as file:
+            # Write a default value (0) for ammo count if the file doesn't exist
+            file.write("0\n")
+
+
+
+def loadAmmoFromFile():
+    # 获取当前工作目录
+    current_directory = os.getcwd()
+    # 构建完整的文件路径
+    full_file_path = os.path.join(current_directory, FILE_NAME)
+    
+    generateAmmoFileIfNotExists()
+    
+    try:
+        with open(full_file_path, "r") as file:
+            global ammoCount
+            ammoCount = int(file.readline())
+            for _ in range(ammoCount):
+                line = file.readline().split()
+                name = line[0]
+                initialVelocity = float(line[1])
+                mass = float(line[2])
+                dragCoefficient = float(line[3])
+                crossSectionalArea = float(line[4])
+                explosionRadius = float(line[5])
+                maxRange = float(line[6])
+                ammo = Ammo(name, initialVelocity, mass, dragCoefficient, crossSectionalArea, explosionRadius, maxRange)
+                ammoList.append(ammo)
+        print("弹药文件读取成功。")
+    except FileNotFoundError:
+        print("找不到弹药文件。")
+    except ValueError:
+        print("弹药文件中存在无效数据。")
+
+
+def saveAmmoToFile():
+    try:
+        with open(FILE_NAME, "w") as file:
+            file.write(str(ammoCount) + "\n")
+            for ammo in ammoList:
+                file.write(f"{ammo.name} {ammo.initialVelocity} {ammo.mass} {ammo.dragCoefficient} {ammo.crossSectionalArea} {ammo.explosionRadius} {ammo.maxRange}\n")
+    except Exception as e:
+        print(f"Error saving ammo to file: {e}")
+
+def deleteAmmo():
+    if ammoCount == 0:
+        print("No ammo available to delete.")
+        return
+
+    print("Enter the index of the ammo to delete: ")
+    try:
+        indexToDelete = int(input())
+    except ValueError:
+        print("Invalid index.")
+        return
+
+    if indexToDelete < 1 or indexToDelete > ammoCount:
+        print("Invalid index.")
+        return
+
+    indexToDelete -= 1  # Adjust for 0-based index
+
+    for i in range(indexToDelete, ammoCount - 1):
+        ammoList[i] = ammoList[i + 1]
+
+    ammoCount -= 1
+
+    saveAmmoToFile()
+
+    print("Ammo deleted successfully.")
+
+def calculateDistance(angle, initialVelocity, dragCoefficient, crossSectionalArea, mass):
+    time = 0.0
+    dt = 0.001
+    velocityX = initialVelocity * math.cos(angle * math.pi / 180)
+    velocityY = initialVelocity * math.sin(angle * math.pi / 180)
+    positionX = 0.0
+    positionY = 0.0
+    distance = 0.0
+    accelerationY = -9.81
+
+    while positionY >= 0:
+        airResistance = calculateAirResistance(math.sqrt(velocityX ** 2 + velocityY ** 2), dragCoefficient, crossSectionalArea)
+        accelerationX = -airResistance * velocityX / math.sqrt(velocityX ** 2 + velocityY ** 2)
+        velocityX += accelerationX * dt
+        velocityY += accelerationY * dt
+        positionX += velocityX * dt
+        positionY += velocityY * dt
+        distance += math.sqrt(velocityX ** 2 + velocityY ** 2) * dt
+        time += dt
+
+    return distance
+
+def calculateAirResistance(velocity, dragCoefficient, crossSectionalArea):
+    airDensity = 1.225
+
+    return 0.5 * dragCoefficient * airDensity * velocity ** 2 * crossSectionalArea
+
+def calculateMaxRange(initialVelocity, dragCoefficient, crossSectionalArea, mass):
+    maxRange = 0.0
+    increment = 1.0
+    angle = 45.0
+    distance = 0.0
+
+    while angle >= 0.0:
+        distance = calculateDistance(angle, initialVelocity, dragCoefficient, crossSectionalArea, mass)
+        if distance > maxRange:
+            maxRange = distance
+        angle -= increment
+
+    return maxRange
+
+def bisectIterate(targetX, targetY, initialVelocity, dragCoefficient, crossSectionalArea, mass):
+    lowerAngle = 0.0
+    upperAngle = 45.0
+    error = 1.0  # Initial error value
+    tolerance = 0.001  # Convergence tolerance
+    maxIterations = 100  # Maximum number of iterations
+
+    iteration = 0
+    angle = 0.0
+
+    while abs(error) > tolerance and iteration < maxIterations:
+        angle = (lowerAngle + upperAngle) / 2.0
+        distance = calculateDistance(angle, initialVelocity, dragCoefficient, crossSectionalArea, mass)
+        error = distance - math.sqrt(targetX ** 2 + targetY ** 2)
+
+        if error < 0:
+            lowerAngle = angle
+        else:
+            upperAngle = angle
+
+        iteration += 1
+
+    if angle <= 0 or angle >= 90:
+        print("Unable to estimate angle. Target is out of range.")
+        return -1.0
+
+    return angle
+
+def shoot():
+    if ammoCount == 0:
+        print("No ammo available to shoot.")
+        return
+
+    ammoIndex = int(input("Enter the ammo index: ")) - 1
+
+    if ammoIndex < 0 or ammoIndex >= ammoCount:
+        print("Invalid ammo index.")
+        return
+
+    targetX, targetY = map(float, input("Enter the target coordinates (x, y): ").split())
+
+    maxRange = ammoList[ammoIndex].maxRange
+    distanceToTarget = math.sqrt(targetX ** 2 + targetY ** 2)
+
+    if distanceToTarget > maxRange:
+        print("Target is out of range.")
+        return
+
+    initialVelocity = ammoList[ammoIndex].initialVelocity
+    dragCoefficient = ammoList[ammoIndex].dragCoefficient
+    crossSectionalArea = ammoList[ammoIndex].crossSectionalArea
+    mass = ammoList[ammoIndex].mass
+
+    angle = bisectIterate(targetX, targetY, initialVelocity, dragCoefficient, crossSectionalArea, mass)
+
+    if angle != -1.0 and 0.0 <= angle <= 45.0:
+        print(f"Estimated shooting angle: {angle:.12f} degrees")
+        mils = angle * 17.777777777778
+        print(f"NATO MILS: {mils:.12f} mils")
+
+        # Simulate projectile motion with air resistance using Runge-Kutta method
+        velocity = initialVelocity
+        velocityX = velocity * math.cos(angle * math.pi / 180)
+        velocityY = velocity * math.sin(angle * math.pi / 180)
+        dt = 0.00001
+        positionX = 0.0
+        positionY = 0.0
+        distance = 0.0
+        accelerationY = -9.81
+
+        while positionY >= 0:
+            airResistance = calculateAirResistance(velocity, dragCoefficient, crossSectionalArea)
+
+            # Runge-Kutta method - Step 1
+            accelerationX1 = -airResistance * velocityX / velocity
+            accelerationY1 = accelerationY
+
+            # Runge-Kutta method - Step 2
+            velocityX2 = velocityX + accelerationX1 * dt / 2.0
+            velocityY2 = velocityY + accelerationY1 * dt / 2.0
+            accelerationX2 = -calculateAirResistance(math.sqrt(velocityX2 ** 2 + velocityY2 ** 2), dragCoefficient, crossSectionalArea) * velocityX2 / velocity
+            accelerationY2 = accelerationY
+
+            # Runge-Kutta method - Step 3
+            velocityX3 = velocityX + accelerationX2 * dt / 2.0
+            velocityY3 = velocityY + accelerationY2 * dt / 2.0
+            accelerationX3 = -calculateAirResistance(math.sqrt(velocityX3 ** 2 + velocityY3 ** 2), dragCoefficient, crossSectionalArea) * velocityX3 / velocity
+            accelerationY3 = accelerationY
+
+            # Runge-Kutta method - Step 4
+            velocityX4 = velocityX + accelerationX3 * dt
+            velocityY4 = velocityY + accelerationY3 * dt
+            accelerationX4 = -calculateAirResistance(math.sqrt(velocityX4 ** 2 + velocityY4 ** 2), dragCoefficient, crossSectionalArea) * velocityX4 / velocity
+            accelerationY4 = accelerationY
+
+            # Runge-Kutta method - Update variables
+            velocityX += (accelerationX1 + 2.0 * accelerationX2 + 2.0 * accelerationX3 + accelerationX4) * dt / 6.0
+            velocityY += (accelerationY1 + 2.0 * accelerationY2 + 2.0 * accelerationY3 + accelerationY4) * dt / 6.0
+            velocity = math.sqrt(velocityX ** 2 + velocityY ** 2)
+            positionX += velocityX * dt
+            positionY += velocityY * dt
+            distance += velocity * dt
+
+        # Calculate kinetic energy at target
+        kineticEnergy = 0.5 * mass * velocity ** 2
+
+        print(f"Velocity at target: {velocity:.12f} m/s")
+        print(f"Kinetic energy at target: {kineticEnergy:.12f} J")
+    else:
+        print("Unable to estimate angle. Target is out of range.")
+
+def addAmmo(ammoCount):
+    if ammoCount == MAX_AMMO:
+        print("Cannot add more ammo. Maximum limit reached.")
+        return
+
+    name = input("Name: ")
+    initialVelocity = float(input("Initial Velocity: "))
+    mass = float(input("Mass: "))
+    dragCoefficient = float(input("Drag Coefficient: "))
+    crossSectionalArea = float(input("Cross-sectional Area: "))
+    explosionRadius = float(input("Explosion Radius: "))
+
+    maxRange = calculateMaxRange(initialVelocity, dragCoefficient, crossSectionalArea, mass)
+
+    ammo = Ammo(name, initialVelocity, mass, dragCoefficient, crossSectionalArea, explosionRadius, maxRange)
+    ammoList.append(ammo)
+    ammoCount += 1
+
+    with open(FILE_NAME, "a") as file:
+        file.write(f"{ammo.name} {ammo.initialVelocity:.2f} {ammo.mass:.2f} {ammo.dragCoefficient:.2f} {ammo.crossSectionalArea:.2f} {ammo.explosionRadius:.2f} {ammo.maxRange:.2f}\n")
+
+    print("Ammo added successfully.")
+
+def viewAmmo():
+    if ammoCount == 0:
+        print("No ammo available.")
+        return
+
+    print("\nAvailable Ammo:")
+    for i, ammo in enumerate(ammoList):
+        print(f"Name: {ammo.name}")
+        print(f"Initial Velocity: {ammo.initialVelocity:.2f}")
+        print(f"Mass: {ammo.mass:.2f}")
+        print(f"Drag Coefficient: {ammo.dragCoefficient:.2f}")
+        print(f"Cross-sectional Area: {ammo.crossSectionalArea:.2f}")
+        print(f"Explosion Radius: {ammo.explosionRadius:.2f}")
+        print(f"Max Range: {ammo.maxRange:.2f}")
+        print()
+
+# Main program loop
+loadAmmoFromFile()
+
+class FireCannonApp(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.initUI()
+
+    def initUI(self):
+        self.setWindowTitle('Fire Cannon Management System')
+        self.setGeometry(100, 100, 600, 400)
+
+        self.centralWidget = QWidget(self)
+        self.setCentralWidget(self.centralWidget)
+
+        self.layout = QVBoxLayout()
+
+        self.textOutput = QTextEdit()
+        self.textOutput.setReadOnly(True)
+        self.layout.addWidget(self.textOutput)
+
+       
+        self.shootButton = QPushButton('Shoot')
+        self.shootButton.clicked.connect(self.shoot)
+        self.layout.addWidget(self.shootButton)
+
+        self.addAmmoButton = QPushButton('Add Ammo')
+        self.addAmmoButton.clicked.connect(self.addAmmo)
+        self.layout.addWidget(self.addAmmoButton)
+
+        self.viewAmmoButton = QPushButton('View Ammo')
+        self.viewAmmoButton.clicked.connect(self.viewAmmo)
+        self.layout.addWidget(self.viewAmmoButton)
+
+        self.deleteAmmoButton = QPushButton('Delete Ammo')
+        self.deleteAmmoButton.clicked.connect(self.deleteAmmo)
+        self.layout.addWidget(self.deleteAmmoButton)
+
+        self.centralWidget.setLayout(self.layout)
+
+    def shoot(self):
+        if ammoCount == 0:
+            self.textOutput.append("No ammo available to shoot.")
+            return
+
+        ammoIndex, ok = QInputDialog.getInt(self, 'Ammo Selection', 'Enter the ammo index:')
+        if ok:
+            ammoIndex -= 1  # Adjust for 0-based index
+
+            if ammoIndex < 0 or ammoIndex >= ammoCount:
+                self.textOutput.append("Invalid ammo index.")
+                return
+
+            target, ok = QInputDialog.getText(self, 'Target Coordinates', 'Enter the target coordinates (x, y):')
+            if ok:
+                try:
+                    targetX, targetY = map(float, target.split())
+                except ValueError:
+                    self.textOutput.append("Invalid target coordinates.")
+                    return
+
+                maxRange = ammoList[ammoIndex].maxRange
+                distanceToTarget = math.sqrt(targetX ** 2 + targetY ** 2)
+
+                if distanceToTarget > maxRange:
+                    self.textOutput.append("Target is out of range.")
+                    return
+
+                initialVelocity = ammoList[ammoIndex].initialVelocity
+                dragCoefficient = ammoList[ammoIndex].dragCoefficient
+                crossSectionalArea = ammoList[ammoIndex].crossSectionalArea
+                mass = ammoList[ammoIndex].mass
+
+                angle = bisectIterate(targetX, targetY, initialVelocity, dragCoefficient, crossSectionalArea, mass)
+
+                if angle != -1.0 and 0.0 <= angle <= 45.0:
+                    self.textOutput.append("                                              ")
+                    self.textOutput.append(f"Estimated shooting angle: {angle:.12f} degrees")
+                    mils = angle * 17.777777777778
+                    self.textOutput.append(f"NATO MILS: {mils:.12f} mils")
+                    self.textOutput.append("                                              ")
+                    # Simulate projectile motion with air resistance using Runge-Kutta method
+                    velocity = initialVelocity
+                    velocityX = velocity * math.cos(angle * math.pi / 180)
+                    velocityY = velocity * math.sin(angle * math.pi / 180)
+                    dt = 0.00001
+                    positionX = 0.0
+                    positionY = 0.0
+                    distance = 0.0
+                    accelerationY = -9.81
+
+                    while positionY >= 0:
+                        airResistance = calculateAirResistance(velocity, dragCoefficient, crossSectionalArea)
+
+                        # Runge-Kutta method - Step 1
+                        accelerationX1 = -airResistance * velocityX / velocity
+                        accelerationY1 = accelerationY
+
+                        # Runge-Kutta method - Step 2
+                        velocityX2 = velocityX + accelerationX1 * dt / 2.0
+                        velocityY2 = velocityY + accelerationY1 * dt / 2.0
+                        accelerationX2 = -calculateAirResistance(math.sqrt(velocityX2 ** 2 + velocityY2 ** 2), dragCoefficient, crossSectionalArea) * velocityX2 / velocity
+                        accelerationY2 = accelerationY
+
+                        # Runge-Kutta method - Step 3
+                        velocityX3 = velocityX + accelerationX2 * dt / 2.0
+                        velocityY3 = velocityY + accelerationY2 * dt / 2.0
+                        accelerationX3 = -calculateAirResistance(math.sqrt(velocityX3 ** 2 + velocityY3 ** 2), dragCoefficient, crossSectionalArea) * velocityX3 / velocity
+                        accelerationY3 = accelerationY
+
+                        # Runge-Kutta method - Step 4
+                        velocityX4 = velocityX + accelerationX3 * dt
+                        velocityY4 = velocityY + accelerationY3 * dt
+                        accelerationX4 = -calculateAirResistance(math.sqrt(velocityX4 ** 2 + velocityY4 ** 2), dragCoefficient, crossSectionalArea) * velocityX4 / velocity
+                        accelerationY4 = accelerationY
+
+                        # Runge-Kutta method - Update variables
+                        velocityX += (accelerationX1 + 2.0 * accelerationX2 + 2.0 * accelerationX3 + accelerationX4) * dt / 6.0
+                        velocityY += (accelerationY1 + 2.0 * accelerationY2 + 2.0 * accelerationY3 + accelerationY4) * dt / 6.0
+                        velocity = math.sqrt(velocityX ** 2 + velocityY ** 2)
+                        positionX += velocityX * dt
+                        positionY += velocityY * dt
+                        distance += velocity * dt
+
+                    # Calculate kinetic energy at target
+                    kineticEnergy = 0.5 * mass * velocity ** 2
+
+                    self.textOutput.append(f"Velocity at target: {velocity:.12f} m/s")
+                    self.textOutput.append(f"Kinetic energy at target: {kineticEnergy:.12f} J")
+                else:
+                    self.textOutput.append("Unable to estimate angle. Target is out of range.")
+
+    def addAmmo(self):
+        global ammoCount  # 将ammoCount声明为全局变量
+        if ammoCount == MAX_AMMO:
+            self.textOutput.append("Cannot add more ammo. Maximum limit reached.")
+            return
+
+        name, okPressed = QInputDialog.getText(self, "Enter Ammo Details", "Name:")
+        initialVelocity, okPressed1 = QInputDialog.getDouble(self, "Enter Ammo Details", "Initial Velocity:", decimals=5)
+        mass, okPressed2 = QInputDialog.getDouble(self, "Enter Ammo Details", "Mass:", decimals=5)
+        dragCoefficient, okPressed3 = QInputDialog.getDouble(self, "Enter Ammo Details", "Drag Coefficient:", decimals=5)
+        crossSectionalArea, okPressed4 = QInputDialog.getDouble(self, "Enter Ammo Details", "Cross-sectional Area:", decimals=5)
+        explosionRadius, okPressed5 = QInputDialog.getDouble(self, "Enter Ammo Details", "Explosion Radius:", decimals=5)
+
+
+        if not okPressed or not okPressed1 or not okPressed2 or not okPressed3 or not okPressed4 or not okPressed5:
+            return
+
+        maxRange = calculateMaxRange(initialVelocity, dragCoefficient, crossSectionalArea, mass)
+
+        ammo = Ammo(name, initialVelocity, mass, dragCoefficient, crossSectionalArea, explosionRadius, maxRange)
+        ammoList.append(ammo)
+        ammoCount += 1
+
+        with open(FILE_NAME, "a") as file:
+            file.write(f"{ammo.name} {ammo.initialVelocity:.2f} {ammo.mass:.2f} {ammo.dragCoefficient:.2f} {ammo.crossSectionalArea:.2f} {ammo.explosionRadius:.2f} {ammo.maxRange:.2f}\n")
+
+        self.textOutput.append("Ammo added successfully.")
+
+    
+    
+
+
+
+    def viewAmmo(self):
+        if ammoCount == 0:
+            self.textOutput.append("No ammo available.")
+            return
+
+        self.textOutput.append("\nAvailable Ammo:")
+        for i, ammo in enumerate(ammoList):
+            self.textOutput.append(f"Name: {ammo.name}")
+            self.textOutput.append(f"Initial Velocity: {ammo.initialVelocity:.2f}")
+            self.textOutput.append(f"Mass: {ammo.mass:.2f}")
+            self.textOutput.append(f"Drag Coefficient: {ammo.dragCoefficient:.2f}")
+            self.textOutput.append(f"Cross-sectional Area: {ammo.crossSectionalArea:.2f}")
+            self.textOutput.append(f"Explosion Radius: {ammo.explosionRadius:.2f}")
+            self.textOutput.append(f"Max Range: {ammo.maxRange:.2f}")
+            self.textOutput.append("")
+
+    def deleteAmmo(self):
+        if ammoCount == 0:
+            self.textOutput.append("No ammo available to delete.")
+            return
+
+        ammoIndex, ok = QInputDialog.getInt(self, 'Ammo Deletion', 'Enter the ammo index to delete:')
+        if ok:
+            ammoIndex -= 1  # Adjust for 0-based index
+
+            if ammoIndex < 0 or ammoIndex >= ammoCount:
+                self.textOutput.append("Invalid ammo index.")
+                return
+
+            for i in range(ammoIndex, ammoCount - 1):
+                ammoList[i] = ammoList[i + 1]
+
+            ammoList.pop()
+            ammoCount -= 1
+
+            saveAmmoToFile()
+
+            self.textOutput.append("Ammo deleted successfully.")
+
+if __name__ == '__main__':
+    app = QApplication(sys.argv)
+    window = FireCannonApp()
+    window.show()
+    sys.exit(app.exec_())
